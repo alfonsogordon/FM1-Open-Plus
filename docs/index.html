@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FM1 Open Plus — Sound Lab</title>
+<style>
+:root{font-family:system-ui,Arial;background:#10131b;color:#edf1ff;color-scheme:dark}
+body{max-width:1100px;margin:auto;padding:18px}h1{margin-bottom:4px}small,.muted{color:#aab2c6}
+.panel{background:#1c2230;border:1px solid #394256;border-radius:14px;padding:15px;margin:14px 0}
+.controls{display:flex;gap:12px;flex-wrap:wrap;align-items:end}.control{display:grid;gap:4px}
+button,select,input{font:inherit}button,select{background:#303b50;color:#fff;border:1px solid #566581;border-radius:8px;padding:9px}
+button{cursor:pointer}button:focus-visible{outline:3px solid #91c8ff}
+button.on{background:#376d70}button.playing{background:#4a866a}
+.keys{display:flex;gap:4px;overflow:auto;padding:12px 0}.keys button{min-width:46px;height:90px;flex:1;background:#d9e1f2;color:#111}
+.keys button:nth-child(12n + 2),.keys button:nth-child(12n + 4),.keys button:nth-child(12n + 7),.keys button:nth-child(12n + 9),.keys button:nth-child(12n + 11){background:#4d5870;color:white}
+.grid{display:grid;grid-template-columns:repeat(16,minmax(24px,1fr));gap:3px;overflow:auto}
+.step{min-width:24px;padding:10px 0;border-radius:5px;background:#2b3345;border:1px solid #4a5365}
+.step.active{background:#6b8fce}.step.now{outline:3px solid #f5d16e;outline-offset:-3px}
+.tracks{display:grid;gap:9px}.track{display:grid;grid-template-columns:80px minmax(0,1fr);gap:8px;align-items:center}
+.status{min-height:20px;color:#9fdfc7}a{color:#a3c7ff}
+@media(max-width:700px){.track{grid-template-columns:1fr}.grid{grid-template-columns:repeat(16,32px)}}
+</style></head><body>
+<h1>FM1 Open Plus <small>Sound Lab v0.1</small></h1>
+<p class="muted">Playable browser prototype. Original Web Audio sound models — <strong>not</strong> Skiff firmware or an FM1 hardware emulator. No hardware flashing.</p>
+<section class="panel"><div class="controls">
+<label class="control">Engine<select id="engine"><option value="juno">JUNO-style pad</option><option value="strings">String ensemble</option><option value="fm">FM bells</option><option value="terrain">Terrain drone</option><option value="acid">Acid bass</option></select></label>
+<label class="control">Root<select id="root"></select></label>
+<label class="control">Scale<select id="scale"><option value="major">Major</option><option value="minor" selected>Minor</option><option value="dorian">Dorian</option><option value="pent">Minor pentatonic</option></select></label>
+<label class="control">Cutoff<input id="cutoff" type="range" min="150" max="9000" value="2900"></label>
+<label class="control">Release<input id="release" type="range" min=".1" max="5" step=".1" value="1.5"></label>
+<button id="audio">Enable audio</button><button id="panic">Stop notes</button>
+</div><div class="keys" id="keys"></div><p class="status" id="status" aria-live="polite">Tap Enable audio, then play the keys.</p></section>
+<section class="panel"><h2>Six-track idea: generative pattern sketch</h2>
+<p class="muted">Three melodic tracks and three synthesised drum lanes. Each square toggles a step. Pitch and rhythm mutations are independent. This is a sketch of the intended workflow, not a port of Jarreth.</p>
+<div class="controls"><label class="control">Tempo<input id="bpm" type="number" min="40" max="240" value="110"></label>
+<label class="control">Pitch mutation <output id="pval">15%</output><input id="pitch" type="range" min="0" max="100" value="15"></label>
+<label class="control">Rhythm mutation <output id="rval">10%</output><input id="rhythm" type="range" min="0" max="100" value="10"></label>
+<label class="control">Density <output id="dval">65%</output><input id="density" type="range" min="0" max="100" value="65"></label>
+<button id="start">Play pattern</button><button id="freeze">Freeze: off</button><button id="random">New pattern</button>
+</div><div class="tracks" id="tracks"></div></section>
+<p class="muted">Keyboard: A S D F G H J K. Audio starts only after a user gesture. For best timing, keep the browser tab foregrounded. MIDI clock and firmware integration are not implemented.</p>
+<script>
+(()=>{'use strict';
+const $=id=>document.getElementById(id);
+const scales={major:[0,2,4,5,7,9,11],minor:[0,2,3,5,7,8,10],dorian:[0,2,3,5,7,9,10],pent:[0,3,5,7,10]};
+const names=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+names.forEach((n,i)=>{const o=document.createElement('option');o.value=i;o.textContent=n;$('root').append(o)});
+$('root').value=0;
+let ctx,master,noiseBuffer,playing=false,interval=null,step=0,frozen=false;
+const active=new Map(),allVoices=new Set();
+const patterns=[
+{label:'PAD',notes:[0,2,4,5,4,2,0,6,0,2,4,5,4,2,1,0],steps:[1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0]},
+{label:'BASS',notes:[0,0,4,0,3,0,4,0,0,0,4,0,5,0,4,0],steps:[1,0,0,1,1,0,0,1,1,0,0,1,1,0,1,0]},
+{label:'LEAD',notes:[4,5,2,4,6,4,2,0,3,4,5,6,4,2,1,0],steps:[1,0,1,0,0,1,0,1,1,0,0,1,0,1,0,1]},
+{label:'KICK',steps:[1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0]},
+{label:'SNARE',steps:[0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0]},
+{label:'HAT',steps:[1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0]}
+];
+function init(){if(ctx)return;ctx=new (window.AudioContext||window.webkitAudioContext)();master=ctx.createGain();master.gain.value=.28;master.connect(ctx.destination);
+noiseBuffer=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate);const d=noiseBuffer.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;}
+async function unlock(){init();await ctx.resume();$('status').textContent='Audio ready';}
+$('audio').onclick=unlock;
+function freq(note){return 440*Math.pow(2,(note-69)/12)}
+function midi(degree,octave=4){const s=scales[$('scale').value];return 12*(octave+1)+Number($('root').value)+s[((degree%s.length)+s.length)%s.length]+12*Math.floor(degree/s.length)}
+function voice(note,engine,duration=null){if(!ctx)return null;const now=ctx.currentTime,base=freq(note),release=Number($('release').value),cut=Number($('cutoff').value);
+const out=ctx.createGain(),filter=ctx.createBiquadFilter();filter.type='lowpass';filter.frequency.setValueAtTime(cut,now);filter.Q.value=engine==='acid'?7:.5;out.connect(filter);filter.connect(master);
+const nodes=[];function osc(type,f,mult=1,detune=0){const o=ctx.createOscillator();o.type=type;o.frequency.value=f*mult;o.detune.value=detune;o.connect(out);o.start(now);nodes.push(o);return o}
+if(engine==='juno'){osc('sawtooth',base,1,-6);osc('sawtooth',base,1,6);osc('square',base,.5);out.gain.setValueAtTime(.0001,now);out.gain.exponentialRampToValueAtTime(.10,now+.12)}
+else if(engine==='strings'){osc('sawtooth',base,1,-9);osc('sawtooth',base,1,9);osc('sawtooth',base,.5);out.gain.setValueAtTime(.0001,now);out.gain.exponentialRampToValueAtTime(.075,now+.45)}
+else if(engine==='fm'){const carrier=ctx.createOscillator(),mod=ctx.createOscillator(),mg=ctx.createGain();carrier.type='sine';mod.type='sine';carrier.frequency.value=base;mod.frequency.value=base*2.01;mg.gain.setValueAtTime(base*2,now);mg.gain.exponentialRampToValueAtTime(1,now+1.5);mod.connect(mg).connect(carrier.frequency);carrier.connect(out);mod.start(now);carrier.start(now);nodes.push(mod,carrier);out.gain.setValueAtTime(.0001,now);out.gain.exponentialRampToValueAtTime(.16,now+.01)}
+else if(engine==='terrain'){osc('triangle',base,1,-12);osc('sine',base,1.502,8);osc('sawtooth',base,.5);out.gain.setValueAtTime(.0001,now);out.gain.exponentialRampToValueAtTime(.08,now+.7)}
+else{osc('sawtooth',base);filter.frequency.setValueAtTime(Math.min(8500,cut*2.4),now);filter.frequency.exponentialRampToValueAtTime(Math.max(150,cut*.35),now+.23);out.gain.setValueAtTime(.0001,now);out.gain.exponentialRampToValueAtTime(.19,now+.009)}
+let ended=false;const v={stop(){if(ended)return;ended=true;const t=ctx.currentTime;out.gain.cancelScheduledValues(t);out.gain.setTargetAtTime(.00001,t,Math.max(.025,release/4));nodes.forEach(n=>{try{n.stop(t+release+0.2)}catch(e){}});allVoices.delete(v)}};
+allVoices.add(v);if(duration!==null)setTimeout(()=>v.stop(),duration*1000);return v}
+function drum(kind){if(!ctx)return;const t=ctx.currentTime,g=ctx.createGain();g.connect(master);if(kind==='KICK'){const o=ctx.createOscillator();o.type='sine';o.frequency.setValueAtTime(155,t);o.frequency.exponentialRampToValueAtTime(45,t+.16);g.gain.setValueAtTime(.9,t);g.gain.exponentialRampToValueAtTime(.001,t+.3);o.connect(g);o.start(t);o.stop(t+.32)}
+else{const s=ctx.createBufferSource(),f=ctx.createBiquadFilter();s.buffer=noiseBuffer;f.type='highpass';f.frequency.value=kind==='HAT'?6500:1400;s.connect(f).connect(g);g.gain.setValueAtTime(kind==='HAT'?.15:.35,t);g.gain.exponentialRampToValueAtTime(.001,t+(kind==='HAT'?.065:.16));s.start(t);s.stop(t+.19)}}
+function noteOn(i){if(active.has(i))return;const v=voice(midi(i,4),$('engine').value);if(v)active.set(i,v)}
+function noteOff(i){const v=active.get(i);if(v)v.stop();active.delete(i)}
+function renderKeys(){const keys=$('keys');keys.innerHTML='';for(let i=0;i<14;i++){const b=document.createElement('button');b.textContent=names[midi(i)%12];b.onpointerdown=e=>{e.preventDefault();unlock().then(()=>noteOn(i))};b.onpointerup=b.onpointercancel=b.onpointerleave=()=>noteOff(i);keys.append(b)}}
+const keymap='asdfghjk';document.addEventListener('keydown',e=>{if(e.repeat||/input|select|textarea/i.test(e.target.tagName))return;const i=keymap.indexOf(e.key.toLowerCase());if(i>=0){unlock().then(()=>noteOn(i))}});document.addEventListener('keyup',e=>{const i=keymap.indexOf(e.key.toLowerCase());if(i>=0)noteOff(i)});
+$('panic').onclick=()=>{active.forEach(v=>v.stop());active.clear();allVoices.forEach(v=>v.stop());stop()};
+function render(){const wrap=$('tracks');wrap.innerHTML='';patterns.forEach((p,r)=>{const row=document.createElement('div');row.className='track';const name=document.createElement('strong');name.textContent=p.label;row.append(name);const grid=document.createElement('div');grid.className='grid';p.steps.forEach((on,c)=>{const b=document.createElement('button');b.className='step'+(on?' active':'')+(playing&&c===step?' now':'');b.setAttribute('aria-label',p.label+' step '+(c+1));b.setAttribute('aria-pressed',!!on);b.textContent=on?'●':'·';b.onclick=()=>{p.steps[c]=p.steps[c]?0:1;render()};grid.append(b)});row.append(grid);wrap.append(row)})}
+function tick(){const density=Number($('density').value)/100;patterns.forEach((p,r)=>{if(!p.steps[step])return;if(Math.random()>density&&r<3)return;if(r>=3)drum(p.label);else voice(midi(p.notes[step],r===1?2:r===0?4:5),r===1?'acid':r===0?'strings':$('engine').value,Math.min(.8,60/Number($('bpm').value)*.65)*1000/1000)});
+if(!frozen){patterns.forEach((p,r)=>{if(r>=3)return;if(Math.random()*100<Number($('pitch').value)){const i=Math.floor(Math.random()*16);p.notes[i]=Math.max(0,Math.min(13,p.notes[i]+(Math.random()<.5?-1:1)))}});if(Math.random()*100<Number($('rhythm').value)){const p=patterns[Math.floor(Math.random()*3)];const i=Math.floor(Math.random()*16);p.steps[i]=1-p.steps[i]}}
+step=(step+1)%16;render()}
+function stop(){playing=false;clearInterval(interval);interval=null;$('start').textContent='Play pattern';render()}
+$('start').onclick=async()=>{if(playing){stop();return}await unlock();playing=true;step=0;$('start').textContent='Stop pattern';tick();interval=setInterval(tick,60000/Math.max(40,Number($('bpm').value)||110)/4)};
+$('bpm').onchange=()=>{if(playing){clearInterval(interval);interval=setInterval(tick,60000/Math.max(40,Number($('bpm').value)||110)/4)}};
+$('freeze').onclick=()=>{frozen=!frozen;$('freeze').textContent='Freeze: '+(frozen?'on':'off');$('freeze').classList.toggle('on',frozen)};
+$('random').onclick=()=>{patterns.forEach((p,r)=>{if(r<3)for(let i=0;i<16;i++){p.notes[i]=Math.floor(Math.random()*7);p.steps[i]=Math.random()<.5?1:0}});render()};
+[['pitch','pval'],['rhythm','rval'],['density','dval']].forEach(([i,o])=>$(i).oninput=()=>$(o).textContent=$(i).value+'%');
+$('root').onchange=$('scale').onchange=renderKeys;
+renderKeys();render();
+})();
+</script></body></html>
