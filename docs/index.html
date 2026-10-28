@@ -19,7 +19,7 @@ button.on{background:#376d70}button.playing{background:#4a866a}
 @media(max-width:700px){.track{grid-template-columns:1fr}.grid{grid-template-columns:repeat(16,32px)}}
 </style></head><body>
 <h1>FM1 Open Plus <small>Sound Lab v0.1</small></h1>
-<p class="muted">Playable browser prototype. Original Web Audio sound models — <strong>not</strong> Skiff firmware or an FM1 hardware emulator. No hardware flashing.</p>
+<p class="muted">Playable browser prototype (work in progress). Original Web Audio sound models — <strong>not</strong> Skiff firmware or an FM1 hardware emulator. No hardware flashing.</p>
 <section class="panel"><div class="controls">
 <label class="control">Engine<select id="engine"><option value="juno">JUNO-style pad</option><option value="strings">String ensemble</option><option value="fm">FM bells</option><option value="terrain">Terrain drone</option><option value="acid">Acid bass</option></select></label>
 <label class="control">Root<select id="root"></select></label>
@@ -28,7 +28,7 @@ button.on{background:#376d70}button.playing{background:#4a866a}
 <label class="control">Release<input id="release" type="range" min=".1" max="5" step=".1" value="1.5"></label>
 <button id="audio">Enable audio</button><button id="panic">Stop notes</button>
 </div><div class="keys" id="keys"></div><p class="status" id="status" aria-live="polite">Tap Enable audio, then play the keys.</p></section>
-<section class="panel"><h2>Six-track idea: generative pattern sketch</h2>
+<section class="panel"><h2>Six-track groovebox demo</h2>
 <p class="muted">Three melodic tracks and three synthesised drum lanes. Each square toggles a step. Pitch and rhythm mutations are independent. This is a sketch of the intended workflow, not a port of Jarreth.</p>
 <div class="controls"><label class="control">Tempo<input id="bpm" type="number" min="40" max="240" value="110"></label>
 <label class="control">Pitch mutation <output id="pval">15%</output><input id="pitch" type="range" min="0" max="100" value="15"></label>
